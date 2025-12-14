@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
-import { UserProfile, PDIObjective } from '../types';
-import { generateMarketReport, extractMarketData, generateTextToSpeech } from '../services/geminiService';
+import React, { useState, useEffect } from 'react';
+import { UserProfile, PDIObjective, JobOpportunity } from '../types';
+import { generateDeepMarketAnalysis, generateTextToSpeech, searchJobs } from '../services/geminiService';
 
 interface DashboardProps {
   profile: UserProfile;
+  apiKey: string;
 }
 
-type TabName = 'strategy' | 'skills' | 'market' | 'resume';
+type TabName = 'overview' | 'strategy' | 'skills' | 'market' | 'resume';
 
 // --- Audio Helper Functions (Raw PCM Decoding) ---
 function decode(base64: string) {
@@ -38,63 +39,84 @@ async function decodeAudioData(
   return buffer;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
-  const [activeTab, setActiveTab] = useState<TabName>('strategy');
+const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
+  const [activeTab, setActiveTab] = useState<TabName>('overview');
   
-  // Market Report State
-  const [marketReport, setMarketReport] = useState<{ content: string; sources: { title: string; uri: string }[] } | null>(null);
+  // Market Report State (Deep Analytics)
+  const [localProfile, setLocalProfile] = useState<UserProfile>(profile);
   const [isSearchingMarket, setIsSearchingMarket] = useState(false);
 
   // Audio State
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
 
-  // Local Profile State (to allow updates from Research)
-  const [localProfile, setLocalProfile] = useState<UserProfile>(profile);
+  // Overview Widgets State
+  const [jobs, setJobs] = useState<JobOpportunity[]>([]);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  
+  // Resume State
+  const [showResumeDisclaimer, setShowResumeDisclaimer] = useState(true);
 
-  const printResume = () => {
-    window.print();
+  // --- Initial Data Loading ---
+  
+  useEffect(() => {
+    if (activeTab === 'overview' && jobs.length === 0) {
+      loadJobs();
+    }
+  }, [activeTab]);
+
+  const loadJobs = async () => {
+    if (!apiKey) return;
+    setIsLoadingJobs(true);
+    try {
+      // Ignore user location for search, default to Brasil as per requirements
+      const location = "Brasil"; 
+      const role = localProfile.strategy.suggestedAreas[0]?.title || localProfile.resume.title || "Tecnologia";
+      const foundJobs = await searchJobs(apiKey, role, location);
+      setJobs(foundJobs);
+    } catch (e) {
+      console.error("Error loading jobs", e);
+    } finally {
+      setIsLoadingJobs(false);
+    }
   };
 
   const handleDeepResearch = async () => {
+    if (!apiKey) {
+      alert("API Key necessária.");
+      return;
+    }
+    
     setIsSearchingMarket(true);
     try {
-      const location = localProfile.resume.location || "Brasil";
-      const role = localProfile.resume.title || localProfile.strategy.suggestedAreas[0]?.title || "Tecnologia";
+      const location = "Brasil"; // Enforce national scope
+      const role = localProfile.resume.title || localProfile.strategy.suggestedAreas[0]?.title || "Profissional";
       
-      // 1. Get Text Report with Sources
-      const report = await generateMarketReport(role, location);
-      setMarketReport(report);
-
-      // 2. Extract Structured Data to Update Dashboard
-      const newData = await extractMarketData(report.content);
+      const analysis = await generateDeepMarketAnalysis(apiKey, role, location);
       
-      // 3. Update Local Profile
       setLocalProfile(prev => ({
         ...prev,
-        marketInfo: {
-          ...prev.marketInfo,
-          ...newData, // Overwrite with fresh data
-          marketReport: report // Store report for persistence if needed
-        }
+        marketInfo: analysis
       }));
 
     } catch (e) {
       console.error(e);
-      alert("Erro ao pesquisar dados de mercado.");
+      alert("Erro ao realizar pesquisa de mercado.");
     } finally {
       setIsSearchingMarket(false);
     }
   };
 
   const handlePlayPDI = async () => {
+    if(!apiKey) return;
+
     if (isPlayingAudio) return;
     setIsGeneratingAudio(true);
     try {
       const textToRead = localProfile.pdi.executiveSummary;
       if (!textToRead) return;
       
-      const base64Audio = await generateTextToSpeech(textToRead);
+      const base64Audio = await generateTextToSpeech(apiKey, textToRead);
       
       // Decode and Play
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -114,538 +136,708 @@ const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
 
     } catch (e) {
       console.error(e);
-      alert("Erro ao reproduzir áudio. Verifique se o navegador suporta Web Audio API.");
+      alert("Erro ao reproduzir áudio.");
       setIsPlayingAudio(false);
     } finally {
       setIsGeneratingAudio(false);
     }
   };
 
-  const renderPDICard = (obj: PDIObjective, idx: number) => {
-    const priorityColor = 
-      obj.priority === 'Alta' ? 'border-red-500 bg-red-50' : 
-      obj.priority === 'Média' ? 'border-amber-500 bg-amber-50' : 
-      'border-blue-500 bg-blue-50';
-      
-    const badgeColor = 
-      obj.priority === 'Alta' ? 'bg-red-100 text-red-700' : 
-      obj.priority === 'Média' ? 'bg-amber-100 text-amber-700' : 
-      'bg-blue-100 text-blue-700';
+  const printResume = () => {
+    window.print();
+  };
 
-    return (
-      <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 relative overflow-hidden group hover:shadow-md transition-shadow">
-        <div className={`absolute top-0 left-0 bottom-0 w-1.5 ${obj.priority === 'Alta' ? 'bg-red-500' : obj.priority === 'Média' ? 'bg-amber-500' : 'bg-blue-500'}`}></div>
-        
-        <div className="pl-3">
-          <div className="flex justify-between items-start mb-3">
-            <h5 className="font-bold text-slate-800 text-base leading-tight pr-8">{obj.description}</h5>
-            <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full whitespace-nowrap ${badgeColor}`}>
-              {obj.priority}
-            </span>
-          </div>
+  const exportToWord = () => {
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Resume</title></head><body>";
+    const footer = "</body></html>";
+    const resumeContent = document.getElementById('resume-content')?.innerHTML;
+    
+    if (!resumeContent) return;
 
-          <div className="flex flex-wrap gap-4 text-xs text-slate-500 mb-4">
-             <div className="flex items-center gap-1.5">
-               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-               <span className="font-medium">{obj.deadline}</span>
-             </div>
-             <div className="flex items-center gap-1.5">
-               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-               <span className="font-medium truncate max-w-[150px]">{obj.indicators}</span>
-             </div>
-          </div>
+    const sourceHTML = header + resumeContent + footer;
+    
+    const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    
+    link.href = url;
+    link.download = `Curriculo_${localProfile.resume.fullName.replace(/\s+/g, '_')}.doc`;
+    
+    document.body.appendChild(link);
+    link.click();
+    
+    document.body.removeChild(link);
+  };
 
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-            <h6 className="text-xs font-bold text-slate-700 uppercase mb-2 flex items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-              Plano de Ação
-            </h6>
-            <ul className="space-y-1.5">
-              {obj.actions.map((act, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-                  <span className="mt-1.5 w-1 h-1 bg-slate-400 rounded-full flex-shrink-0"></span>
-                  <span className="leading-snug">{act}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+  // --- RENDERERS ---
 
-          <div className="mt-3 flex items-start gap-2 text-xs text-slate-500 bg-slate-50/50 p-2 rounded">
-             <svg className="w-4 h-4 text-blue-400 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             <span><span className="font-semibold text-slate-700">Recurso:</span> {obj.resources}</span>
-          </div>
+  // 1. Resume Renderer
+  const renderResume = () => {
+    const { seniorityLevel } = localProfile.resume;
+    
+    const experienceData = localProfile.resume.experience?.length > 0 
+      ? localProfile.resume.experience 
+      : [{ 
+          role: "[SEU CARGO AQUI]", 
+          company: "[NOME DA EMPRESA]", 
+          period: "[MÊS/ANO] - [MÊS/ANO]", 
+          highlights: ["Utilize este espaço para descrever suas atividades.", "Foque em resultados e projetos realizados."] 
+        }];
+    
+    const educationData = localProfile.resume.education?.length > 0
+      ? localProfile.resume.education
+      : [{
+          course: "[NOME DO CURSO]",
+          institution: "[INSTITUIÇÃO]",
+          period: "[ANO INÍCIO] - [ANO FIM]",
+          status: "Completo",
+          details: "TCC ou Projetos Relevantes"
+      }];
+
+    const Header = () => (
+      <div className="border-b-2 border-slate-900 pb-6 mb-6">
+        <h1 className="text-4xl font-bold text-slate-900 uppercase tracking-tight mb-2">{localProfile.resume.fullName}</h1>
+        <p className="text-xl text-slate-600 font-medium">{localProfile.resume.title || "[SEU TÍTULO PROFISSIONAL]"}</p>
+        <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
+           {localProfile.resume.location && <span>📍 {localProfile.resume.location}</span>}
+           {localProfile.resume.phone && <span>📱 {localProfile.resume.phone}</span>}
+           {localProfile.resume.email && <span>📧 {localProfile.resume.email}</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-4 text-sm text-indigo-600">
+            {localProfile.resume.linkedin && <a href={localProfile.resume.linkedin} target="_blank" rel="noreferrer" className="hover:underline">LinkedIn</a>}
+            {localProfile.resume.github && <a href={localProfile.resume.github} target="_blank" rel="noreferrer" className="hover:underline">GitHub</a>}
+            {localProfile.resume.portfolio && <a href={localProfile.resume.portfolio} target="_blank" rel="noreferrer" className="hover:underline">Portfólio</a>}
         </div>
       </div>
+    );
+
+    // Default to Template B structure for simplicity in this view, customizable by logic
+    return (
+        <div id="resume-content" className="bg-white w-full max-w-[21cm] mx-auto p-12 shadow-lg print:shadow-none print:max-w-none print:p-0">
+            <Header />
+            <div className="mb-6">
+                <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-2">Resumo Profissional</h2>
+                <p className="text-slate-700 text-sm leading-relaxed">{localProfile.resume.summary}</p>
+            </div>
+            
+            <div className="mb-6">
+                <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3">Skills & Tecnologias</h2>
+                <div className="flex flex-wrap gap-2">
+                   {localProfile.resume.skills?.hard?.map((s, i) => (
+                       <span key={i} className="text-sm text-slate-800 bg-slate-100 px-2 py-1 rounded-sm">• {s}</span>
+                   ))}
+                </div>
+            </div>
+
+            <div className="mb-6">
+                <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-4">Experiência Profissional</h2>
+                <div className="space-y-6">
+                    {experienceData.map((exp, i) => (
+                        <div key={i}>
+                            <div className="flex justify-between items-baseline mb-1">
+                                <h3 className="font-bold text-slate-800 text-base">{exp.role}</h3>
+                                <span className="text-sm text-slate-500 font-medium whitespace-nowrap ml-4">{exp.period}</span>
+                            </div>
+                            <p className="text-indigo-700 font-semibold text-sm mb-2">{exp.company}</p>
+                            <ul className="list-disc list-outside ml-4 text-sm text-slate-700 space-y-1">
+                                {exp.highlights?.map((h, hi) => <li key={hi} className="leading-snug">{h}</li>)}
+                            </ul>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mb-6">
+                 <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3">Formação Acadêmica</h2>
+                 {educationData.map((edu, i) => (
+                    <div key={i} className="flex flex-col sm:flex-row justify-between text-sm mb-2">
+                        <div>
+                            <span className="font-bold text-slate-800">{edu.course}</span>
+                            <span className="block text-slate-600">{edu.institution}</span>
+                        </div>
+                        <span className="text-slate-500 mt-1 sm:mt-0">{edu.period}</span>
+                    </div>
+                 ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-6">
+                <div>
+                     <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3">Idiomas</h2>
+                     <ul className="text-sm text-slate-700 space-y-1">
+                        {localProfile.resume.languages?.map((l, i) => <li key={i}>{l}</li>)}
+                    </ul>
+                </div>
+                 {localProfile.resume.certifications && localProfile.resume.certifications.length > 0 && (
+                     <div>
+                         <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3">Certificações</h2>
+                         <ul className="text-sm text-slate-700 space-y-1">
+                            {localProfile.resume.certifications.slice(0, 4).map((c, i) => <li key={i}>{c}</li>)}
+                        </ul>
+                    </div>
+                 )}
+            </div>
+        </div>
+    );
+  };
+
+  const renderMarketChart = () => {
+    const { junior, pleno, senior } = localProfile.marketInfo.salary;
+    const maxVal = Math.max(senior.max, 25000); 
+    
+    const Bar = ({ label, data, color }: { label: string, data: {min: number, max: number, avg: number}, color: string }) => (
+       <div className="mb-6 relative">
+          <div className="flex justify-between text-xs font-bold text-slate-600 mb-2">
+             <span className="uppercase tracking-wider">{label}</span>
+             <span className="text-slate-900">Média: R$ {data.avg.toLocaleString('pt-BR')}</span>
+          </div>
+          <div className="w-full bg-slate-100 rounded-full h-8 relative overflow-hidden">
+             {/* Range Bar */}
+             <div 
+               className={`absolute h-full opacity-20 ${color}`}
+               style={{ left: `${(data.min/maxVal)*100}%`, width: `${((data.max - data.min)/maxVal)*100}%` }}
+             ></div>
+             {/* Average Marker */}
+             <div 
+               className={`absolute h-full w-1.5 bg-slate-800 z-10 shadow-lg`}
+               style={{ left: `${(data.avg/maxVal)*100}%` }}
+             ></div>
+             {/* Min Marker */}
+             <div 
+               className={`absolute h-full w-0.5 bg-slate-400 z-0`}
+               style={{ left: `${(data.min/maxVal)*100}%` }}
+             ></div>
+              {/* Max Marker */}
+             <div 
+               className={`absolute h-full w-0.5 bg-slate-400 z-0`}
+               style={{ left: `${(data.max/maxVal)*100}%` }}
+             ></div>
+          </div>
+          <div className="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+              <span style={{ marginLeft: `${Math.max(0, (data.min/maxVal)*100 - 5)}%` }}>R${data.min}</span>
+              <span style={{ marginRight: `${Math.max(0, 100 - ((data.max/maxVal)*100) - 5)}%` }}>R${data.max}</span>
+          </div>
+       </div>
+    );
+
+    return (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Faixas Salariais (Brasil)
+            </h4>
+            <Bar label="Júnior" data={junior} color="bg-blue-600" />
+            <Bar label="Pleno" data={pleno} color="bg-indigo-600" />
+            <Bar label="Sênior" data={senior} color="bg-purple-600" />
+            <p className="text-xs text-slate-400 mt-4 text-center">* Dados estimados baseados no mercado nacional.</p>
+        </div>
     );
   };
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'overview':
+        const priorityObjective = localProfile.pdi.axes
+          .flatMap(axis => axis.objectives)
+          .find(obj => obj.priority === 'Alta');
+
+        return (
+             <div className="space-y-8 animate-fadeIn">
+                 {/* Hero Section */}
+                 <div className="relative bg-gradient-to-r from-slate-900 to-indigo-900 rounded-3xl p-8 md:p-10 text-white shadow-2xl overflow-hidden">
+                     <div className="relative z-10">
+                        <div className="flex items-start justify-between">
+                            <div>
+                                <h2 className="text-3xl md:text-4xl font-bold mb-2">Olá, {localProfile.resume.fullName.split(' ')[0]} 👋</h2>
+                                <p className="text-indigo-200 text-lg mb-6 max-w-xl">
+                                    Sua análise de carreira está pronta. Você está posicionado como <span className="text-white font-bold bg-white/20 px-2 py-0.5 rounded">{localProfile.resume.seniorityLevel}</span>.
+                                </p>
+                            </div>
+                            <div className="hidden md:block text-right">
+                                <div className="text-sm text-indigo-300 uppercase tracking-widest font-semibold mb-1">Score de Perfil</div>
+                                <div className="text-5xl font-black text-white">85<span className="text-2xl text-indigo-400">/100</span></div>
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                             <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/10">
+                                 <div className="text-indigo-300 text-xs font-bold uppercase mb-1">Próximo Nível</div>
+                                 <div className="font-bold text-lg">{localProfile.strategy.shortTermGoal}</div>
+                             </div>
+                             <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/10">
+                                 <div className="text-indigo-300 text-xs font-bold uppercase mb-1">Foco Principal</div>
+                                 <div className="font-bold text-lg">{priorityObjective ? priorityObjective.description : "Desenvolvimento Contínuo"}</div>
+                             </div>
+                             <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/10">
+                                 <div className="text-indigo-300 text-xs font-bold uppercase mb-1">Top Skill a Aprender</div>
+                                 <div className="font-bold text-lg">{localProfile.skillsAndGaps.inferredGaps[0]?.skillName || "Gestão"}</div>
+                             </div>
+                        </div>
+                     </div>
+                     {/* Decorative circles */}
+                     <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-indigo-500 rounded-full opacity-20 blur-3xl"></div>
+                     <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl"></div>
+                 </div>
+                 
+                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Market & Jobs Column */}
+                    <div className="lg:col-span-2 space-y-6">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-xl font-bold text-slate-800">Oportunidades no Brasil</h3>
+                            <button onClick={loadJobs} disabled={isLoadingJobs} className="text-sm text-indigo-600 font-bold hover:underline">
+                                {isLoadingJobs ? 'Atualizando...' : 'Atualizar Vagas'}
+                            </button>
+                        </div>
+                        
+                        <div className="grid md:grid-cols-2 gap-4">
+                           {isLoadingJobs ? (
+                               [1,2,3,4].map(n => <div key={n} className="h-32 bg-slate-100 rounded-xl animate-pulse"></div>)
+                           ) : jobs.length > 0 ? (
+                               jobs.slice(0, 4).map((job, i) => (
+                                   <a key={i} href={job.url} target="_blank" className="group bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all block">
+                                       <div className="flex justify-between items-start mb-2">
+                                           <div className="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">
+                                               {job.company.substring(0,2).toUpperCase()}
+                                           </div>
+                                           {job.fitScore > 80 && <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-bold">Alta Compatibilidade</span>}
+                                       </div>
+                                       <h4 className="font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{job.title}</h4>
+                                       <p className="text-sm text-slate-500 mb-2">{job.company}</p>
+                                       <div className="flex items-center gap-2 text-xs text-slate-400">
+                                           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                                           {job.location}
+                                       </div>
+                                   </a>
+                               ))
+                           ) : (
+                               <div className="col-span-2 text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+                                   <p className="text-slate-500">Nenhuma vaga encontrada no momento.</p>
+                               </div>
+                           )}
+                        </div>
+                    </div>
+
+                    {/* Quick Stats Column */}
+                    <div className="space-y-6">
+                        <h3 className="text-xl font-bold text-slate-800">Resumo de Competências</h3>
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                            <div className="space-y-4">
+                                <div>
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="font-medium text-slate-700">Hard Skills</span>
+                                        <span className="text-indigo-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type === 'hard').length}</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 h-2 rounded-full">
+                                        <div className="bg-indigo-500 h-2 rounded-full" style={{ width: '70%' }}></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="font-medium text-slate-700">Soft Skills</span>
+                                        <span className="text-emerald-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type === 'soft').length}</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 h-2 rounded-full">
+                                        <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '85%' }}></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="font-medium text-slate-700">Gaps Críticos</span>
+                                        <span className="text-amber-600 font-bold">{localProfile.skillsAndGaps.inferredGaps.filter(g => g.priority === 'Alta').length}</span>
+                                    </div>
+                                    <div className="w-full bg-slate-100 h-2 rounded-full">
+                                        <div className="bg-amber-500 h-2 rounded-full" style={{ width: '40%' }}></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button onClick={() => setActiveTab('skills')} className="w-full mt-6 py-2 text-sm font-bold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                                Ver Mapa Completo
+                            </button>
+                        </div>
+                    </div>
+                 </div>
+             </div>
+        );
+      
       case 'strategy':
         return (
-          <div className="space-y-6 animate-fadeIn">
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-800 mb-2">Resumo Estratégico</h3>
-              <p className="text-slate-600 leading-relaxed">{localProfile.strategy.summary}</p>
-            </div>
+          <div className="space-y-10 animate-fadeIn max-w-5xl mx-auto">
+             <div className="text-center max-w-2xl mx-auto mb-8">
+                <h2 className="text-3xl font-bold text-slate-800 mb-3">Seu Plano Estratégico</h2>
+                <p className="text-slate-600 leading-relaxed">{localProfile.strategy.summary}</p>
+             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
-                <h4 className="font-semibold text-blue-800 mb-2">Curto Prazo (1-2 anos)</h4>
-                <p className="text-blue-900">{localProfile.strategy.shortTermGoal}</p>
-              </div>
-              <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100">
-                <h4 className="font-semibold text-indigo-800 mb-2">Médio Prazo (3-5 anos)</h4>
-                <p className="text-indigo-900">{localProfile.strategy.midTermGoal}</p>
-              </div>
-            </div>
+             {/* Visual Roadmap */}
+             <div className="relative">
+                 {/* Connecting Line */}
+                 <div className="absolute left-1/2 transform -translate-x-1/2 h-full w-1 bg-gradient-to-b from-indigo-200 to-slate-200 rounded-full hidden md:block"></div>
 
-            <h3 className="text-xl font-bold text-slate-800 mt-8 mb-4">Áreas Sugeridas</h3>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {localProfile.strategy.suggestedAreas.map((area, idx) => (
-                <div key={idx} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h4 className="text-lg font-bold text-slate-900">{area.title}</h4>
-                      <span className="text-sm font-medium text-slate-500 uppercase tracking-wide">{area.level}</span>
-                    </div>
-                    <div className="flex items-center justify-center w-14 h-14 rounded-full bg-green-100 text-green-700 font-bold text-lg">
-                      {Math.round(area.matchScore)}%
-                    </div>
-                  </div>
-                  <p className="text-slate-600 mb-4 text-sm">{area.justification}</p>
-                  
-                  <div className="mb-4">
-                    <h5 className="text-xs font-bold text-slate-400 uppercase mb-2">Próximos Passos</h5>
-                    <ul className="list-disc list-inside text-sm text-slate-700 space-y-1">
-                      {area.nextSteps.map((step, sIdx) => (
-                        <li key={sIdx}>{step}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  
-                  <div className="bg-red-50 p-3 rounded-lg border border-red-100">
-                    <h5 className="text-xs font-bold text-red-700 uppercase mb-1">Riscos</h5>
-                    <p className="text-xs text-red-800">{area.risks}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                 {/* Short Term */}
+                 <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-24 mb-12">
+                     <div className="text-right hidden md:block pt-6">
+                         <div className="text-indigo-600 font-bold tracking-widest uppercase text-sm mb-2">Fase 1: 6-12 Meses</div>
+                         <h3 className="text-2xl font-bold text-slate-800">Objetivo de Curto Prazo</h3>
+                     </div>
+                     <div className="md:hidden">
+                         <div className="text-indigo-600 font-bold tracking-widest uppercase text-sm mb-2">Fase 1: 6-12 Meses</div>
+                         <h3 className="text-2xl font-bold text-slate-800 mb-4">Objetivo de Curto Prazo</h3>
+                     </div>
+                     
+                     {/* Center Node */}
+                     <div className="absolute left-1/2 top-8 transform -translate-x-1/2 w-6 h-6 bg-indigo-600 border-4 border-white rounded-full shadow-lg hidden md:block"></div>
+
+                     <div className="bg-white p-8 rounded-2xl border border-indigo-100 shadow-lg relative">
+                         <div className="absolute top-6 -left-3 w-6 h-6 bg-white transform rotate-45 border-l border-b border-indigo-100 hidden md:block"></div>
+                         <p className="text-lg text-slate-700 font-medium leading-relaxed">{localProfile.strategy.shortTermGoal}</p>
+                         <div className="mt-4 flex flex-wrap gap-2">
+                             {(localProfile.pdi.axes[0]?.objectives || []).slice(0,2).map((obj, i) => (
+                                 <span key={i} className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold border border-indigo-100">
+                                     🎯 {obj.description.substring(0, 30)}...
+                                 </span>
+                             ))}
+                         </div>
+                     </div>
+                 </div>
+
+                 {/* Mid Term */}
+                 <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-24">
+                     <div className="order-2 md:order-1 bg-white p-8 rounded-2xl border border-purple-100 shadow-lg relative">
+                         <div className="absolute top-6 -right-3 w-6 h-6 bg-white transform rotate-45 border-r border-t border-purple-100 hidden md:block"></div>
+                         <p className="text-lg text-slate-700 font-medium leading-relaxed">{localProfile.strategy.midTermGoal}</p>
+                         <div className="mt-4 flex flex-wrap gap-2">
+                             <span className="bg-purple-50 text-purple-700 px-3 py-1 rounded-full text-xs font-bold border border-purple-100">
+                                 🚀 Liderança
+                             </span>
+                             <span className="bg-purple-50 text-purple-700 px-3 py-1 rounded-full text-xs font-bold border border-purple-100">
+                                 💎 Especialização
+                             </span>
+                         </div>
+                     </div>
+                     
+                     {/* Center Node */}
+                     <div className="absolute left-1/2 top-8 transform -translate-x-1/2 w-6 h-6 bg-purple-600 border-4 border-white rounded-full shadow-lg hidden md:block mt-2"></div>
+
+                     <div className="order-1 md:order-2 md:pt-6">
+                         <div className="text-purple-600 font-bold tracking-widest uppercase text-sm mb-2">Fase 2: 2-3 Anos</div>
+                         <h3 className="text-2xl font-bold text-slate-800">Visão de Médio Prazo</h3>
+                     </div>
+                 </div>
+             </div>
+
+             {/* Career Options Cards */}
+             <div className="mt-16">
+                 <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                     Caminhos Sugeridos
+                 </h3>
+                 <div className="grid md:grid-cols-2 gap-6">
+                     {localProfile.strategy.suggestedAreas.map((area, idx) => (
+                         <div key={idx} className="bg-slate-50 p-6 rounded-xl border border-slate-200 hover:border-indigo-300 transition-all group">
+                             <div className="flex justify-between items-start mb-4">
+                                 <h4 className="font-bold text-lg text-slate-900">{area.title}</h4>
+                                 <span className="bg-white text-slate-800 text-xs font-bold px-3 py-1 rounded border border-slate-200 shadow-sm">{area.matchScore}% Match</span>
+                             </div>
+                             <p className="text-sm text-slate-600 mb-4">{area.justification}</p>
+                             <div className="space-y-3">
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 uppercase">Riscos</span>
+                                     <p className="text-xs text-slate-700">{area.risks}</p>
+                                 </div>
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 uppercase">Próximos Passos</span>
+                                     <ul className="mt-1 space-y-1">
+                                         {area.nextSteps?.slice(0, 2).map((step, sIdx) => (
+                                             <li key={sIdx} className="text-xs text-indigo-700 flex items-center gap-2">
+                                                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                                 {step}
+                                             </li>
+                                         ))}
+                                     </ul>
+                                 </div>
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+             </div>
           </div>
         );
 
       case 'skills':
         return (
           <div className="space-y-8 animate-fadeIn">
-            
-            {/* Skills Analysis Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Strengths */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <span className="w-2 h-6 bg-green-500 rounded-full"></span>
-                  Pontos Fortes
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {localProfile.skillsAndGaps.strengths.map((skill, idx) => (
-                    <div key={idx} className="group relative">
-                      <span className="px-3 py-1.5 bg-green-50 text-green-800 rounded-lg text-sm font-medium border border-green-100 flex items-center gap-2 cursor-help">
-                        {skill.name}
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span>
-                      </span>
-                      {skill.evidence && (
-                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
-                           {skill.evidence}
-                         </div>
-                      )}
+             <div className="flex flex-col md:flex-row gap-8">
+                {/* Left Column: Skills Inventory */}
+                <div className="flex-1 space-y-8">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <span className="w-8 h-8 rounded-lg bg-green-100 text-green-600 flex items-center justify-center">💪</span>
+                            Fortalezas
+                        </h3>
+                        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                            <div className="flex flex-wrap gap-3">
+                                {localProfile.skillsAndGaps.strengths.map((s, i) => (
+                                    <div key={i} className="flex flex-col bg-slate-50 border border-slate-100 rounded-lg px-4 py-2 min-w-[120px]">
+                                        <span className="font-bold text-slate-800 text-sm">{s.name}</span>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                <div className={`h-full rounded-full ${s.level === 'Especialista' ? 'bg-green-500 w-full' : s.level === 'Avançado' ? 'bg-green-400 w-3/4' : 'bg-green-300 w-1/2'}`}></div>
+                                            </div>
+                                            <span className="text-[10px] text-slate-500 uppercase">{s.level}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
-                  ))}
+
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">🚧</span>
+                            Pontos de Atenção (Gaps)
+                        </h3>
+                        <div className="grid grid-cols-1 gap-4">
+                            {localProfile.skillsAndGaps.inferredGaps.map((g, i) => (
+                                <div key={i} className="bg-white p-5 rounded-xl border-l-4 border-amber-400 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <h4 className="font-bold text-slate-800">{g.skillName}</h4>
+                                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.priority === 'Alta' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>Prioridade {g.priority}</span>
+                                        </div>
+                                        <p className="text-sm text-slate-600">{g.impact}</p>
+                                    </div>
+                                    <div className="bg-slate-50 px-4 py-2 rounded-lg text-xs text-slate-700 max-w-xs border border-slate-100">
+                                        <strong>Sugestão:</strong> {g.suggestion}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
-              </div>
 
-              {/* Weaknesses */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <span className="w-2 h-6 bg-amber-500 rounded-full"></span>
-                  Pontos a Melhorar
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {localProfile.skillsAndGaps.weaknesses.length > 0 ? localProfile.skillsAndGaps.weaknesses.map((skill, idx) => (
-                    <span key={idx} className="px-3 py-1.5 bg-amber-50 text-amber-800 rounded-lg text-sm font-medium border border-amber-100 flex items-center gap-2">
-                       {skill.name}
-                    </span>
-                  )) : (
-                    <p className="text-slate-500 text-sm italic">Nenhum ponto fraco citado explicitamente.</p>
-                  )}
+                {/* Right Column: PDI */}
+                <div className="md:w-[400px] flex flex-col h-full">
+                    <div className="bg-indigo-900 text-white p-6 rounded-t-2xl flex justify-between items-center">
+                        <h3 className="text-lg font-bold">Plano de Ação (PDI)</h3>
+                        <button 
+                            onClick={handlePlayPDI}
+                            className="bg-white/10 hover:bg-white/20 p-2 rounded-full transition-colors"
+                            title="Ouvir Resumo"
+                        >
+                            {isGeneratingAudio ? <span className="animate-spin block">⏳</span> : isPlayingAudio ? '🔊' : '🎧'}
+                        </button>
+                    </div>
+                    <div className="bg-white border-x border-b border-slate-200 rounded-b-2xl p-6 flex-1 space-y-6">
+                        {localProfile.pdi.axes.map((axis, i) => (
+                            <div key={i}>
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{axis.axisName}</h4>
+                                <div className="space-y-4">
+                                    {axis.objectives.map((obj, j) => (
+                                        <div key={j} className="relative pl-6 pb-2 border-l-2 border-slate-100 last:border-0">
+                                            <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${obj.priority === 'Alta' ? 'bg-red-500 shadow-red-200 shadow' : 'bg-indigo-400'}`}></div>
+                                            <p className="text-sm font-bold text-slate-800 leading-tight mb-1">{obj.description}</p>
+                                            <p className="text-xs text-slate-500 mb-2">Prazo: {obj.deadline}</p>
+                                            <ul className="space-y-1">
+                                                {obj.actions.map((act, k) => (
+                                                    <li key={k} className="flex items-start gap-2 text-xs text-slate-600">
+                                                        <input type="checkbox" className="mt-0.5 rounded text-indigo-600 focus:ring-0" />
+                                                        <span className="flex-1">{act}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Inferred Gaps Table */}
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                 <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                 Análise de Gaps & Mercado
-              </h3>
-              <p className="text-sm text-slate-500 mb-4">
-                Com base nos seus objetivos, identificamos skills essenciais que você não mencionou ou precisa desenvolver.
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left border-collapse">
-                  <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="px-4 py-3 rounded-tl-lg">Skill Faltante</th>
-                      <th className="px-4 py-3">Tipo</th>
-                      <th className="px-4 py-3">Prioridade</th>
-                      <th className="px-4 py-3 w-1/3">Impacto</th>
-                      <th className="px-4 py-3 w-1/3 rounded-tr-lg">Recomendação</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {localProfile.skillsAndGaps.inferredGaps.map((gap, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3 font-semibold text-slate-800">{gap.skillName}</td>
-                        <td className="px-4 py-3 text-xs uppercase text-slate-500">{gap.type}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded text-[10px] font-bold border uppercase tracking-wide ${
-                            gap.priority === 'Alta' ? 'bg-red-50 text-red-700 border-red-100' :
-                            gap.priority === 'Média' ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                            'bg-blue-50 text-blue-700 border-blue-100'
-                          }`}>
-                            {gap.priority}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-600 leading-snug text-xs">{gap.impact}</td>
-                        <td className="px-4 py-3 text-slate-700 font-medium text-xs">{gap.suggestion}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            
-            {/* NEW PDI DESIGN */}
-            <div className="space-y-6">
-               <div className="flex justify-between items-center">
-                   <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                     <span className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-indigo-200 shadow-md">
-                       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
-                     </span>
-                     Plano de Desenvolvimento (PDI)
-                   </h3>
-                   <button 
-                     onClick={handlePlayPDI}
-                     disabled={isGeneratingAudio || isPlayingAudio}
-                     className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold transition-all shadow-sm ${
-                       isPlayingAudio 
-                       ? 'bg-red-100 text-red-600 hover:bg-red-200 ring-2 ring-red-200' 
-                       : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-indigo-200 hover:shadow-lg'
-                     } disabled:opacity-50 disabled:cursor-not-allowed`}
-                   >
-                     {isGeneratingAudio ? (
-                       <span className="flex items-center gap-2">
-                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                          Gerando Áudio...
-                       </span>
-                     ) : isPlayingAudio ? (
-                       <span className="flex items-center gap-2">
-                          <span className="relative flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span></span>
-                          Ouvindo...
-                       </span>
-                     ) : (
-                       <span className="flex items-center gap-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-                          Ouvir Resumo
-                       </span>
-                     )}
-                   </button>
-               </div>
-
-               {/* Executive Summary Quote */}
-               <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 p-6 rounded-2xl relative">
-                  <svg className="absolute top-4 left-4 w-8 h-8 text-indigo-200 -z-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21L14.017 18C14.017 16.8954 14.9124 16 16.017 16H19.017C19.5693 16 20.017 15.5523 20.017 15V9C20.017 8.44772 19.5693 8 19.017 8H15.017C14.4647 8 14.017 8.44772 14.017 9V11C14.017 11.5523 13.5693 12 13.017 12H12.017V5H16.017C18.2261 5 20.017 6.79086 20.017 9V15C20.017 17.2091 18.2261 19 16.017 19H14.017V21ZM5.0166 21L5.0166 18C5.0166 16.8954 5.91203 16 7.0166 16H10.0166C10.5689 16 11.0166 15.5523 11.0166 15V9C11.0166 8.44772 10.5689 8 10.0166 8H6.0166C5.46432 8 5.0166 8.44772 5.0166 9V11C5.0166 11.5523 4.56889 12 4.0166 12H3.0166V5H7.0166C9.22574 5 11.0166 6.79086 11.0166 9V15C11.0166 17.2091 9.22574 19 7.0166 19H5.0166V21Z" /></svg>
-                  <p className="relative z-10 text-indigo-900 font-medium leading-relaxed italic text-center px-4">
-                    "{localProfile.pdi.executiveSummary}"
-                  </p>
-               </div>
-               
-               {/* PDI AXES */}
-               <div className="grid gap-8">
-                 {localProfile.pdi.axes.map((axis, idx) => (
-                   <div key={idx} className="animate-fadeIn">
-                     <h4 className="text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-200 flex items-center justify-between">
-                       {axis.axisName}
-                       <span className="text-xs font-normal text-slate-400 bg-slate-50 px-2 py-1 rounded-full">{axis.objectives.length} objetivos</span>
-                     </h4>
-                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {axis.objectives.map((obj, oIdx) => renderPDICard(obj, oIdx))}
-                     </div>
-                   </div>
-                 ))}
-               </div>
-            </div>
+             </div>
           </div>
         );
 
       case 'market':
         return (
           <div className="space-y-8 animate-fadeIn">
-            {/* Real-time Research Button */}
-             <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
-               <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-               <div className="relative z-10">
-                 <h3 className="font-bold text-2xl flex items-center gap-3 mb-2">
-                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                   Pesquisa Profunda (Deep Research)
-                 </h3>
-                 <p className="text-blue-100 max-w-lg leading-relaxed">
-                   Conecte-se ao Google Search para buscar vagas reais, salários atualizados e tendências do momento. 
-                   A IA irá reescrever os dados abaixo com base na pesquisa.
+            {/* Deep Research Header */}
+            <div className="bg-slate-900 rounded-2xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+               <div>
+                 <h3 className="font-bold text-2xl mb-2">Análise Profunda de Mercado</h3>
+                 <p className="text-slate-300 max-w-lg">
+                   Dados em tempo real sobre salários, demanda e empresas contratando para {localProfile.resume.title} no Brasil.
                  </p>
                </div>
                <button 
                  onClick={handleDeepResearch}
                  disabled={isSearchingMarket}
-                 className="relative z-10 bg-white text-blue-700 font-bold px-8 py-4 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all disabled:opacity-75 disabled:scale-100 flex items-center gap-3 whitespace-nowrap"
+                 className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold px-8 py-4 rounded-xl shadow-lg transition-all disabled:opacity-50 flex items-center gap-2"
                >
-                 {isSearchingMarket ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-blue-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      Pesquisando...
-                    </>
-                 ) : (
-                    'Atualizar Dados com Pesquisa Real'
-                 )}
+                 {isSearchingMarket ? 'Pesquisando...' : 'Atualizar Dados Agora'}
                </button>
-             </div>
+            </div>
 
-             {/* Live Data Grid */}
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Demand */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center text-center">
-                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Demanda Atual</span>
-                   <div className={`text-4xl font-black mb-1 ${
-                     localProfile.marketInfo.demandLevel === 'Alta' ? 'text-green-500' : 
-                     localProfile.marketInfo.demandLevel === 'Média' ? 'text-amber-500' : 'text-slate-500'
-                   }`}>
-                     {localProfile.marketInfo.demandLevel}
-                   </div>
-                   <p className="text-xs text-slate-400">Nível de procura</p>
+            {/* 1. Overview */}
+            <div className="grid md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm md:col-span-2">
+                    <h4 className="font-bold text-slate-800 mb-2">Panorama Geral</h4>
+                    <p className="text-slate-600 leading-relaxed">{localProfile.marketInfo.overview.summary}</p>
                 </div>
-                
-                {/* Salary */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm md:col-span-2 flex flex-col justify-center">
-                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Faixa Salarial Estimada</span>
-                   <div className="text-3xl font-bold text-slate-800 tracking-tight">
-                     {localProfile.marketInfo.salaryRange}
-                   </div>
-                   <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                     {marketReport ? (
-                       <span className="text-blue-500 font-bold flex items-center gap-1">
-                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-                         Verificado via Deep Research
-                       </span>
-                     ) : (
-                       '*Estimativa IA (Clique em Atualizar para dados reais)'
-                     )}
-                   </p>
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+                    <span className="text-sm font-bold text-slate-400 uppercase">Demanda</span>
+                    <span className={`text-4xl font-black my-2 ${localProfile.marketInfo.overview.demandLevel === 'Alta' ? 'text-green-500' : 'text-amber-500'}`}>
+                        {localProfile.marketInfo.overview.demandLevel}
+                    </span>
                 </div>
-             </div>
-             
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               {/* Companies */}
-               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                 <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                   <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                   Empresas em Alta
-                 </h3>
-                 <div className="flex flex-wrap gap-2">
-                    {localProfile.marketInfo.targetCompanies.map((company, idx) => (
-                      <span key={idx} className="bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-200">
-                        {company}
-                      </span>
-                    ))}
-                 </div>
-               </div>
-               
-               {/* Trends */}
-               <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                 <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                   <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-                   Tendências Identificadas
-                 </h3>
-                 <ul className="space-y-3">
-                   {localProfile.marketInfo.trends.map((trend, idx) => (
-                     <li key={idx} className="flex items-start gap-2 text-sm text-slate-600">
-                       <span className="mt-1.5 w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0"></span>
-                       {trend}
-                     </li>
-                   ))}
-                 </ul>
-               </div>
-             </div>
+            </div>
 
-             {/* Research Report Card */}
-             {marketReport && (
-               <div className="bg-slate-50 p-8 rounded-2xl border border-slate-200 animate-fadeIn relative">
-                 <h4 className="text-lg font-bold text-slate-900 mb-4 border-b border-slate-200 pb-2">
-                   Relatório de Pesquisa Completo
-                 </h4>
-                 <div className="prose prose-slate prose-sm max-w-none text-slate-600">
-                   <div dangerouslySetInnerHTML={{ __html: marketReport.content.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
-                 </div>
-                 
-                 {marketReport.sources.length > 0 && (
-                   <div className="mt-6 pt-4 border-t border-slate-200">
-                     <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">Fontes Utilizadas</h5>
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                       {marketReport.sources.map((source, idx) => (
-                         <a 
-                           key={idx} 
-                           href={source.uri} 
-                           target="_blank" 
-                           rel="noreferrer"
-                           className="flex items-center gap-2 text-xs bg-white border border-slate-200 hover:border-blue-300 hover:text-blue-600 px-3 py-2 rounded-lg transition-colors truncate"
-                           title={source.title}
-                         >
-                           <img src={`https://www.google.com/s2/favicons?domain=${new URL(source.uri).hostname}`} alt="" className="w-4 h-4 opacity-70" />
-                           <span className="truncate">{source.title}</span>
-                         </a>
-                       ))}
-                     </div>
-                   </div>
-                 )}
-               </div>
-             )}
+            {/* 2. Salary Analysis */}
+            <div className="grid md:grid-cols-2 gap-6">
+                {renderMarketChart()}
+                <div className="bg-white p-6 rounded-xl border border-slate-200">
+                    <h4 className="font-bold text-slate-800 mb-6">Projeção de Crescimento (5 Anos)</h4>
+                    {/* Simple CSS Line Chart Simulation */}
+                    <div className="h-48 flex items-end justify-between space-x-2 px-2 border-b border-slate-100 pb-2">
+                        {localProfile.marketInfo.salary.growthProjection?.map((val, i) => (
+                            <div key={i} className="flex flex-col items-center flex-1 group">
+                                <div className="w-full bg-emerald-400 rounded-t-sm opacity-80 group-hover:opacity-100 transition-opacity relative" style={{ height: `${Math.min(100, (val / (localProfile.marketInfo.salary.growthProjection[5] || 1) * 0.8) * 100)}%` }}>
+                                   <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                     {val > 1000 ? `${(val/1000).toFixed(1)}k` : val}
+                                   </div>
+                                </div>
+                                <span className="text-[10px] text-slate-500 mt-2">Ano {i+1}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-4 text-center">Tendência estimada de vagas/salários.</p>
+                </div>
+            </div>
+
+            {/* 3. Companies & 4. Skills */}
+            <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-xl border border-slate-200">
+                    <h4 className="font-bold text-slate-800 mb-4">Top Empresas Contratando</h4>
+                    <div className="space-y-3">
+                        {localProfile.marketInfo.topCompanies?.map((comp, i) => (
+                            <div key={i} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-100 transition-all">
+                                <div>
+                                    <h5 className="font-bold text-slate-800">{comp.name}</h5>
+                                    <a href={comp.url} target="_blank" className="text-xs text-indigo-600 hover:underline">Ver vagas ({comp.vacancies})</a>
+                                </div>
+                                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-xl border border-slate-200">
+                    <h4 className="font-bold text-slate-800 mb-4">Skills em Alta</h4>
+                    <div className="space-y-4">
+                        {localProfile.marketInfo.skillsDemand?.map((skill, i) => (
+                            <div key={i}>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="font-semibold text-slate-700">
+                                        {skill.name}
+                                        {skill.userHas && <span className="ml-2 text-green-600 font-bold text-[10px]">✓ VOCÊ TEM</span>}
+                                    </span>
+                                    <span className="text-slate-500">{skill.percentage}% demanda</span>
+                                </div>
+                                <div className="w-full bg-slate-100 rounded-full h-2">
+                                    <div 
+                                      className={`h-2 rounded-full ${skill.userHas ? 'bg-green-500' : 'bg-slate-400'}`} 
+                                      style={{ width: `${skill.percentage}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* 5. Insights */}
+            <div className="grid md:grid-cols-3 gap-6">
+                <div className="bg-indigo-50 p-6 rounded-xl border border-indigo-100">
+                    <h5 className="font-bold text-indigo-800 mb-2 text-sm uppercase">Perspectiva</h5>
+                    <p className="text-sm text-indigo-900">{localProfile.marketInfo.insights.growthPerspective}</p>
+                </div>
+                <div className="bg-emerald-50 p-6 rounded-xl border border-emerald-100">
+                    <h5 className="font-bold text-emerald-800 mb-2 text-sm uppercase">Melhor ROI</h5>
+                    <p className="text-sm text-emerald-900">{localProfile.marketInfo.insights.roiCertifications}</p>
+                </div>
+                <div className="bg-amber-50 p-6 rounded-xl border border-amber-100">
+                    <h5 className="font-bold text-amber-800 mb-2 text-sm uppercase">Desafios</h5>
+                    <p className="text-sm text-amber-900">{localProfile.marketInfo.insights.challenges}</p>
+                </div>
+            </div>
           </div>
         );
 
       case 'resume':
         return (
-          <div className="animate-fadeIn pb-12">
-            <div className="mb-6 flex justify-end no-print">
-              <button 
-                onClick={printResume}
-                className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                Imprimir / PDF
-              </button>
-            </div>
-
-            {/* Resume Page Container - A4-ish proportions */}
-            <div className="bg-white w-full max-w-[21cm] mx-auto p-8 md:p-12 shadow-lg print:shadow-none print:p-0 print:max-w-none">
-              
-              {/* Header */}
-              <div className="border-b-2 border-slate-900 pb-6 mb-6">
-                <h1 className="text-4xl font-bold text-slate-900 uppercase tracking-tight mb-2">{localProfile.resume.fullName}</h1>
-                <p className="text-xl text-slate-600 font-medium">{localProfile.resume.title}</p>
-                <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
-                  {localProfile.resume.location && <span>📍 {localProfile.resume.location}</span>}
-                  <span>📧 {localProfile.resume.contactPlaceholder}</span>
-                </div>
-              </div>
-
-              {/* Summary */}
-              <div className="mb-8">
-                <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3 pb-1">Resumo Profissional</h2>
-                <p className="text-slate-700 text-sm leading-relaxed text-justify">
-                  {localProfile.resume.summary}
-                </p>
-              </div>
-
-              {/* Experience */}
-              {localProfile.resume.experience.length > 0 && (
-                <div className="mb-8">
-                  <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-4 pb-1">Experiência Profissional</h2>
-                  <div className="space-y-5">
-                    {localProfile.resume.experience.map((exp, idx) => (
-                      <div key={idx}>
-                        <div className="flex justify-between items-baseline mb-1">
-                          <h3 className="font-bold text-slate-800">{exp.role}</h3>
-                          <span className="text-sm text-slate-500 italic">{exp.period}</span>
+          <div className="animate-fadeIn pb-12 relative">
+            {showResumeDisclaimer && (
+                <div className="absolute inset-0 z-50 flex items-start justify-center pt-20 bg-slate-900/50 backdrop-blur-sm">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full border-l-4 border-amber-500">
+                        <div className="flex items-start gap-4">
+                            <div className="bg-amber-100 p-2 rounded-full text-amber-600">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-lg text-slate-800 mb-2">Atenção: Este é um rascunho</h3>
+                                <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+                                    Este currículo foi gerado por IA com base na nossa conversa. 
+                                    É fundamental que você <strong>leia, revise e edite</strong> as datas, nomes de empresas e detalhes específicos.
+                                    <br/><br/>
+                                    Adicionamos textos de exemplo (ex: [Nome da Empresa]) onde faltaram informações.
+                                </p>
+                                <button 
+                                  onClick={() => setShowResumeDisclaimer(false)}
+                                  className="w-full bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800"
+                                >
+                                    Entendi, vou revisar
+                                </button>
+                            </div>
                         </div>
-                        <p className="text-slate-700 font-medium text-sm mb-2">{exp.company}</p>
-                        <ul className="list-disc list-outside ml-4 text-sm text-slate-600 space-y-1">
-                          {exp.highlights.map((bullet, bIdx) => (
-                            <li key={bIdx}>{bullet}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
+                    </div>
                 </div>
-              )}
+            )}
 
-              {/* Education */}
-              <div className="mb-8">
-                <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-4 pb-1">Formação Acadêmica</h2>
-                <div className="space-y-3">
-                  {localProfile.resume.education.map((edu, idx) => (
-                     <div key={idx}>
-                       <div className="flex justify-between items-baseline">
-                         <h3 className="font-bold text-slate-800 text-sm">{edu.course}</h3>
-                         <span className="text-xs text-slate-500">{edu.period}</span>
-                       </div>
-                       <p className="text-sm text-slate-600">{edu.institution} <span className="text-slate-400 mx-1">•</span> <span className="italic">{edu.status}</span></p>
-                     </div>
-                  ))}
-                </div>
+            <div className="mb-6 flex justify-between items-center no-print bg-slate-200 p-4 rounded-xl">
+              <span className="text-sm font-bold text-slate-600">Formato: {localProfile.resume.seniorityLevel}</span>
+              <div className="flex gap-2">
+                <button 
+                    onClick={exportToWord}
+                    className="flex items-center gap-2 bg-white text-blue-700 border border-blue-200 px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors font-medium text-sm"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    Baixar Word (.doc)
+                </button>
+                <button 
+                    onClick={printResume}
+                    className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-700 transition-colors font-medium text-sm"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                    Salvar PDF
+                </button>
               </div>
-
-              {/* Skills */}
-              <div className="grid grid-cols-2 gap-8 mb-8">
-                <div>
-                   <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3 pb-1">Hard Skills</h2>
-                   <div className="flex flex-wrap gap-2">
-                     {localProfile.resume.skills.hard.map((skill, idx) => (
-                       <span key={idx} className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-700 font-medium">{skill}</span>
-                     ))}
-                   </div>
-                </div>
-                <div>
-                   <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3 pb-1">Soft Skills</h2>
-                   <div className="flex flex-wrap gap-2">
-                     {localProfile.resume.skills.soft.map((skill, idx) => (
-                       <span key={idx} className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-700 font-medium">{skill}</span>
-                     ))}
-                   </div>
-                </div>
-              </div>
-              
-              {/* Optional Sections */}
-               {(localProfile.resume.certifications.length > 0 || localProfile.resume.languages.length > 0) && (
-                 <div className="grid grid-cols-2 gap-8">
-                    {localProfile.resume.certifications.length > 0 && (
-                      <div>
-                        <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3 pb-1">Certificações</h2>
-                        <ul className="list-disc list-inside text-sm text-slate-600">
-                          {localProfile.resume.certifications.map((cert, idx) => <li key={idx}>{cert}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                     {localProfile.resume.languages.length > 0 && (
-                      <div>
-                        <h2 className="text-lg font-bold text-slate-900 uppercase border-b border-slate-200 mb-3 pb-1">Idiomas</h2>
-                        <ul className="list-disc list-inside text-sm text-slate-600">
-                          {localProfile.resume.languages.map((lang, idx) => <li key={idx}>{lang}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                 </div>
-               )}
-
             </div>
+            {renderResume()}
           </div>
         );
+        
+      default:
+         return (
+             <div className="flex items-center justify-center h-64 text-slate-500">
+                 Carregando aba...
+             </div>
+         );
     }
   };
 
   const tabs: { id: TabName; label: string }[] = [
+    { id: 'overview', label: 'Início' },
     { id: 'strategy', label: 'Estratégia' },
     { id: 'skills', label: 'Skills & PDI' },
-    { id: 'market', label: 'Mercado' },
+    { id: 'market', label: 'Mercado (Deep)' },
     { id: 'resume', label: 'Currículo' },
   ];
 
@@ -659,7 +851,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profile }) => {
                onClick={() => setActiveTab(tab.id)}
                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                  activeTab === tab.id
-                   ? 'border-blue-600 text-blue-600'
+                   ? 'border-indigo-600 text-indigo-600'
                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                }`}
              >
