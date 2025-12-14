@@ -1,0 +1,7 @@
+{
+  "name": "AI Career Architect",
+  "description": "An advanced AI agent for career screening, profile analysis, and professional consulting.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
