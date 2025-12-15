@@ -697,18 +697,29 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
                 {renderMarketChart()}
                 <div className="bg-white p-6 rounded-xl border border-slate-200">
                     <h4 className="font-bold text-slate-800 mb-6">Projeção de Crescimento (5 Anos)</h4>
-                    {/* Simple CSS Line Chart Simulation */}
-                    <div className="h-48 flex items-end justify-between space-x-2 px-2 border-b border-slate-100 pb-2">
-                        {growthProj.map((val, i) => (
-                            <div key={i} className="flex flex-col items-center flex-1 group">
-                                <div className="w-full bg-emerald-400 rounded-t-sm opacity-80 group-hover:opacity-100 transition-opacity relative" style={{ height: `${Math.min(100, (val / maxProjection) * 100)}%` }}>
-                                   <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                                     {val > 1000 ? `${(val/1000).toFixed(1)}k` : val}
+                    {/* Updated CSS Line Chart with Visible Labels */}
+                    <div className="h-56 flex items-end justify-between gap-2 px-2 border-b border-slate-100 pb-4">
+                        {growthProj.length > 0 ? growthProj.map((val, i) => (
+                            <div key={i} className="flex flex-col items-center flex-1 h-full justify-end">
+                                <div className="mb-1 text-[10px] font-bold text-slate-600">
+                                    {val > 0 ? (val >= 1000 ? `${(val/1000).toFixed(1)}k` : val) : ''}
+                                </div>
+                                <div 
+                                    className="w-full bg-emerald-400 rounded-t-sm transition-all duration-700 ease-out hover:bg-emerald-500 relative group" 
+                                    style={{ height: `${val > 0 ? (val / maxProjection) * 100 : 2}%` }}
+                                >
+                                   {/* Tooltip for exact value on hover */}
+                                   <div className="absolute opacity-0 group-hover:opacity-100 bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none whitespace-nowrap z-10">
+                                     R$ {val.toLocaleString('pt-BR')}
                                    </div>
                                 </div>
-                                <span className="text-[10px] text-slate-500 mt-2">Ano {i+1}</span>
+                                <span className="text-[10px] text-slate-400 mt-2 font-medium">Ano {i+1}</span>
                             </div>
-                        ))}
+                        )) : (
+                             <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs italic">
+                                 Sem dados de projeção disponíveis
+                             </div>
+                        )}
                     </div>
                     <p className="text-xs text-slate-400 mt-4 text-center">Tendência estimada de vagas/salários.</p>
                 </div>
