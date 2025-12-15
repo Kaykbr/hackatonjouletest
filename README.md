@@ -10,7 +10,7 @@
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
   [![Vite](https://img.shields.io/badge/Vite-6.0+-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev/)
   
-  **[Demo ao Vivo](https://ai.studio/apps/drive/1vaucvwjWSV3jyNTDvh9-yTcGV--RoPiU)** • **[Documentação](#-índice)** • **[Contribuir](#-equipe)**
+  **[Documentação](#-índice)** • **[Contribuir](#-equipe)**
   
 </div>
 
@@ -273,18 +273,15 @@ Persona: *Consultor de Carreira Executivo*
       <a href="https://github.com/Kaykbr">
         <img src="https://github.com/Kaykbr.png" width="100px;" alt="Kayky Bezerra"/><br>
         <sub><b>Kayky Bezerra</b></sub>
-      </a><br>
-      <sub>Full Stack Developer</sub>
+      </a>
     </td>
     <td align="center">
       <img src="https://via.placeholder.com/100/FF69B4/FFFFFF?text=B" width="100px;" alt="Beatriz"/><br>
-      <sub><b>Beatriz</b></sub><br>
-      <sub>UX/UI Designer</sub>
+      <sub><b>Beatriz</b></sub>
     </td>
     <td align="center">
       <img src="https://via.placeholder.com/100/9370DB/FFFFFF?text=ME" width="100px;" alt="Maria Eduarda"/><br>
-      <sub><b>Maria Eduarda</b></sub><br>
-      <sub>Business Analyst</sub>
+      <sub><b>Maria Eduarda</b></sub>
     </td>
   </tr>
 </table>
@@ -353,16 +350,7 @@ Este projeto foi desenvolvido para o **Hackathon Joule 2025**.
 ## 📞 Suporte
 
 - 🐛 **Issues**: [GitHub Issues](https://github.com/Kaykbr/hackatonjouletest/issues)
-- 💬 **Discussões**: [GitHub Discussions](https://github.com/Kaykbr/hackatonjouletest/discussions)
-- 📧 **Email**: Entre em contato via GitHub
-
----
-
-## 🌟 Agradecimentos
-
-- **Google**: Pela API Gemini e suporte técnico excepcional
-- **Hackathon Joule 2025**: Pela oportunidade e desafio inspirador
-- **Comunidade Open Source**: Pelas ferramentas incríveis que usamos
+- 📧 **Email**: kaykybritosilva23@gmail.com
 
 ---
 
