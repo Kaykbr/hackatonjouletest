@@ -281,7 +281,7 @@ Persona: *Consultor de Carreira Executivo*
     </td>
     <td align="center">
       <a href="https://github.com/MaduAraujo">
-        <img src="https://via.placeholder.com/100/9370DB/FFFFFF?text=ME" width="100px;" alt="Maria Eduarda"/><br>
+        <img src="https://github.com/MaduAraujo.png" width="100px;" alt="Maria Eduarda"/><br>
         <sub><b>Maria Eduarda</b></sub>
       </a>
     </td>
