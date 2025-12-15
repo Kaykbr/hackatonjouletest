@@ -276,8 +276,10 @@ Persona: *Consultor de Carreira Executivo*
       </a>
     </td>
     <td align="center">
-      <img src="https://via.placeholder.com/100/FF69B4/FFFFFF?text=B" width="100px;" alt="Beatriz"/><br>
-      <sub><b>Beatriz</b></sub>
+      <a href="https://github.com/BeatrizChorban">
+        <img src="https://github.com/BeatrizChorban.png" width="100px;" alt="Beatriz"/><br>
+        <sub><b>Beatriz</b></sub>
+      </a>
     </td>
     <td align="center">
       <a href="https://github.com/MaduAraujo">
