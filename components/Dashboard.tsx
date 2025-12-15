@@ -424,7 +424,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
                                 <div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="font-medium text-slate-700">Hard Skills</span>
-                                        <span className="text-indigo-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type === 'hard').length}</span>
+                                        <span className="text-indigo-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type?.toLowerCase().includes('hard')).length}</span>
                                     </div>
                                     <div className="w-full bg-slate-100 h-2 rounded-full">
                                         <div className="bg-indigo-500 h-2 rounded-full" style={{ width: '70%' }}></div>
@@ -433,7 +433,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
                                 <div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="font-medium text-slate-700">Soft Skills</span>
-                                        <span className="text-emerald-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type === 'soft').length}</span>
+                                        <span className="text-emerald-600 font-bold">{localProfile.skillsAndGaps.strengths.filter(s => s.type?.toLowerCase().includes('soft')).length}</span>
                                     </div>
                                     <div className="w-full bg-slate-100 h-2 rounded-full">
                                         <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '85%' }}></div>
@@ -655,6 +655,10 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
         );
 
       case 'market':
+        // Calculate max projection safely for chart scaling
+        const growthProj = localProfile.marketInfo.salary.growthProjection || [];
+        const maxProjection = Math.max(...growthProj, 1);
+
         return (
           <div className="space-y-8 animate-fadeIn">
             {/* Deep Research Header */}
@@ -695,9 +699,9 @@ const Dashboard: React.FC<DashboardProps> = ({ profile, apiKey }) => {
                     <h4 className="font-bold text-slate-800 mb-6">Projeção de Crescimento (5 Anos)</h4>
                     {/* Simple CSS Line Chart Simulation */}
                     <div className="h-48 flex items-end justify-between space-x-2 px-2 border-b border-slate-100 pb-2">
-                        {localProfile.marketInfo.salary.growthProjection?.map((val, i) => (
+                        {growthProj.map((val, i) => (
                             <div key={i} className="flex flex-col items-center flex-1 group">
-                                <div className="w-full bg-emerald-400 rounded-t-sm opacity-80 group-hover:opacity-100 transition-opacity relative" style={{ height: `${Math.min(100, (val / (localProfile.marketInfo.salary.growthProjection[5] || 1) * 0.8) * 100)}%` }}>
+                                <div className="w-full bg-emerald-400 rounded-t-sm opacity-80 group-hover:opacity-100 transition-opacity relative" style={{ height: `${Math.min(100, (val / maxProjection) * 100)}%` }}>
                                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                                      {val > 1000 ? `${(val/1000).toFixed(1)}k` : val}
                                    </div>
